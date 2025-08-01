@@ -1,4 +1,4 @@
-package queryengine
+package queryservice
 
 import (
 	"net/http"
