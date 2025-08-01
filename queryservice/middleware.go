@@ -25,26 +25,28 @@ func ConditionalSubdomainFilterMiddleware() gin.HandlerFunc {
 		// 2. Aplicar filtro de seguridad por subdominio
 		claimsValue, _ := c.Get("claims")
 		claims, _ := claimsValue.(map[string]interface{})
-		role, _ := claims["role"].(string)
+		if claims != nil {
+    role, _ := claims["role"].(string)
 
-		// Solo aplicamos el filtro si el usuario NO es admin
-		if role != "admin" {
-			userSubdomain, exists := c.Get("subdomain")
-			if !exists {
-				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
-					"error": "No se pudo determinar el subdominio del usuario para filtrar la consulta.",
-				})
-				return
-			}
-			
-			// Añadimos el filtro de forma segura
-			subdomainFilter := firebase.QueryFilter{
-				Field:    "subdomain",
-				Operator: "==",
-				Value:    userSubdomain.(string),
-			}
-			options.Filters = append(options.Filters, subdomainFilter)
-		}
+    // Solo aplicamos el filtro de subdominio si el usuario NO es admin
+    if role != "admin" {
+        userSubdomain, exists := c.Get("subdomain")
+        if !exists {
+            c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+                "error": "No se pudo determinar el subdominio del usuario para filtrar la consulta.",
+            })
+            return
+        }
+        
+        // Añadimos el filtro de forma segura
+        subdomainFilter := firebase.QueryFilter{
+            Field:    "subdomain",
+            Operator: "==",
+            Value:    userSubdomain.(string),
+        }
+        options.Filters = append(options.Filters, subdomainFilter)
+    }
+}
 
 		// 3. Validar que la consulta siempre incluya un project_id
 		hasProjectFilter := false
