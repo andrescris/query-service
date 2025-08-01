@@ -1,7 +1,6 @@
 package queryservice
 
 import (
-	"context"
 	"errors"
 	"net/http"
 
@@ -11,24 +10,27 @@ import (
 	"google.golang.org/api/iterator"
 )
 
-// QueryHandler ejecuta una consulta utilizando las opciones seguras y el cliente
-// que el middleware y el inyector prepararon.
+// QueryHandler ejecuta una consulta utilizando el cliente y las opciones del contexto.
 func QueryHandler(c *gin.Context) {
 	collection := c.Param("collection")
 
-	// 1. Obtiene el cliente de Firestore desde el contexto (inyectado en main.go).
+	// --- INICIO DE LA CORRECCIÓN ---
+
+	// 1. OBTENER EL CLIENTE DEL CONTEXTO
+	// En lugar de confiar en una variable global, usamos el cliente
+	// que el servicio 'products' nos inyectó.
 	clientValue, exists := c.Get("firestoreClient")
 	if !exists {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Firestore client not found in context."})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "CRITICAL: Firestore client not found in context."})
 		return
 	}
 	client, ok := clientValue.(*firestore.Client)
-	if !ok {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid Firestore client type in context."})
+	if !ok || client == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "CRITICAL: Invalid or nil Firestore client in context."})
 		return
 	}
 
-	// 2. Obtiene las opciones de consulta seguras del contexto.
+	// 2. OBTENER LAS OPCIONES DE CONSULTA DEL CONTEXTO
 	optionsValue, exists := c.Get("secure_query_options")
 	if !exists {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Secure query options not found in context."})
@@ -36,54 +38,37 @@ func QueryHandler(c *gin.Context) {
 	}
 	options := optionsValue.(firebase.QueryOptions)
 
-	// 3. Ejecuta la consulta usando el cliente y las opciones.
-	docs, err := executeQuery(c.Request.Context(), client, collection, options)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":   "Failed to execute query",
-			"details": err.Error(),
-		})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"success":    true,
-		"documents":  docs,
-		"count":      len(docs),
-		"collection": collection,
-		"query":      options,
-	})
-}
-
-// executeQuery construye y ejecuta la consulta de Firestore usando el cliente proporcionado.
-func executeQuery(ctx context.Context, client *firestore.Client, collection string, options firebase.QueryOptions) ([]map[string]interface{}, error) {
+	// 3. EJECUTAR LA CONSULTA USANDO EL CLIENTE INYECTADO
+	// Ya no llamamos a la función problemática `firestore.QueryDocuments`.
+	// Construimos y ejecutamos la consulta aquí mismo.
 	query := client.Collection(collection).Query
 	for _, filter := range options.Filters {
 		query = query.Where(filter.Field, filter.Operator, filter.Value)
 	}
 
-	// Aquí podrías añadir más lógica para otros campos de QueryOptions si los tuvieras
-	// Por ejemplo:
-	// if options.Limit > 0 {
-	//     query = query.Limit(options.Limit)
-	// }
-	// if options.OrderBy != "" {
-	//     query = query.OrderBy(options.OrderBy, firestore.Asc)
-	// }
-
-	iter := query.Documents(ctx)
+	iter := query.Documents(c.Request.Context())
 	defer iter.Stop()
 
 	var results []map[string]interface{}
 	for {
 		doc, err := iter.Next()
 		if errors.Is(err, iterator.Done) {
-			break // Se terminaron los documentos, salimos del bucle.
+			break // Se acabaron los resultados
 		}
 		if err != nil {
-			return nil, err // Ocurrió un error real.
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to iterate documents", "details": err.Error()})
+			return
 		}
 		results = append(results, doc.Data())
 	}
-	return results, nil
+
+	// --- FIN DE LA CORRECCIÓN ---
+
+	c.JSON(http.StatusOK, gin.H{
+		"success":    true,
+		"documents":  results,
+		"count":      len(results),
+		"collection": collection,
+		"query":      options,
+	})
 }
