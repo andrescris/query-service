@@ -22,33 +22,41 @@ func ConditionalSubdomainFilterMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		// 2. Aplicar filtro de seguridad por subdominio
-		claimsValue, _ := c.Get("claims")
-		claims, _ := claimsValue.(map[string]interface{})
-		if claims != nil {
-    role, _ := claims["role"].(string)
+		// --- LÓGICA CORREGIDA ---
+		// 2. Revisar si la clave tiene permisos de administrador para saltar el filtro.
+		//    Definimos un permiso especial, por ejemplo "read:all_subdomains".
+		bypassFilter := false
+		if perms, exists := c.Get("permissions"); exists {
+			permissions, _ := perms.([]interface{})
+			for _, p := range permissions {
+				if p.(string) == "read:all_subdomains" {
+					bypassFilter = true
+					break
+				}
+			}
+		}
 
-    // Solo aplicamos el filtro de subdominio si el usuario NO es admin
-    if role != "admin" {
-        userSubdomain, exists := c.Get("subdomain")
-        if !exists {
-            c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
-                "error": "No se pudo determinar el subdominio del usuario para filtrar la consulta.",
-            })
-            return
-        }
-        
-        // Añadimos el filtro de forma segura
-        subdomainFilter := firebase.QueryFilter{
-            Field:    "subdomain",
-            Operator: "==",
-            Value:    userSubdomain.(string),
-        }
-        options.Filters = append(options.Filters, subdomainFilter)
-    }
-}
+		// 3. Aplicar el filtro de subdominio si NO se debe saltar.
+		if !bypassFilter {
+			// Leemos el subdominio de la cabecera X-Client-Subdomain
+			userSubdomain := c.GetHeader("X-Client-Subdomain")
+			if userSubdomain == "" {
+				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+					"error": "El encabezado X-Client-Subdomain es requerido para esta consulta.",
+				})
+				return
+			}
+			
+			// Añadimos el filtro de forma segura
+			subdomainFilter := firebase.QueryFilter{
+				Field:    "subdomain",
+				Operator: "==",
+				Value:    userSubdomain,
+			}
+			options.Filters = append(options.Filters, subdomainFilter)
+		}
 
-		// 3. Validar que la consulta siempre incluya un project_id
+		// 4. Validar que la consulta siempre incluya un project_id (sin cambios)
 		hasProjectFilter := false
 		for _, filter := range options.Filters {
 			if filter.Field == "project_id" && filter.Operator == "==" {
@@ -63,7 +71,7 @@ func ConditionalSubdomainFilterMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		// 4. Guardar las opciones de consulta seguras en el contexto para el handler
+		// 5. Guardar las opciones de consulta seguras en el contexto (sin cambios)
 		c.Set("secure_query_options", options)
 
 		c.Next()
